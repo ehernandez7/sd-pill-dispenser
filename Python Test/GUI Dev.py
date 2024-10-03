@@ -1,0 +1,92 @@
+from kivy.app import App
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.popup import Popup
+from kivy.clock import Clock
+from kivy.core.window import Window
+import schedule
+import time
+import threading
+from gpiozero import Motor
+
+# Motor setup (adjust pins as necessary)
+motor = Motor(forward=17, backward=18)
+
+# Define the backend logic for scheduling and motor control
+def rotate_motor():
+    motor.forward()
+    time.sleep(0.5)  # Rotate for 0.5 seconds (adjust as needed)
+    motor.stop()
+    print(f"Motor rotated at scheduled time {time.strftime('%H:%M')}")
+
+# Background thread to run the scheduler
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+# Create a background thread to run the scheduler
+scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+scheduler_thread.start()
+
+# Define the Kivy application
+class MedicineSchedulerApp(App):
+    def build(self):
+        # Set up the layout
+        self.layout = BoxLayout(orientation='vertical', padding=20, spacing=10)
+        
+        # Create a label for instructions
+        self.instruction_label = Label(text="Set Medication Time (HH:MM):", font_size=20)
+        self.layout.add_widget(self.instruction_label)
+        
+        # Create a text input for time
+        self.time_input = TextInput(hint_text='HH:MM', font_size=18, multiline=False, size_hint=(1, 0.3))
+        self.layout.add_widget(self.time_input)
+        
+        # Create a button to set the time
+        self.set_time_button = Button(text="Set Time", font_size=18, size_hint=(1, 0.3))
+        self.set_time_button.bind(on_press=self.set_time)
+        self.layout.add_widget(self.set_time_button)
+        
+        # Create a label to display the current schedule
+        self.schedule_label = Label(text="Current Schedule: None", font_size=18)
+        self.layout.add_widget(self.schedule_label)
+        
+        # Return the layout
+        return self.layout
+
+    def set_time(self, instance):
+        time_str = self.time_input.text
+        try:
+            # Validate time format (HH:MM)
+            time.strptime(time_str, '%H:%M')
+            schedule.every().day.at(time_str).do(rotate_motor)
+            
+            # Update the display schedule
+            self.schedule_label.text = f"Current Schedule: {time_str}"
+            
+            # Show a success popup
+            self.show_popup("Success", f"Medication time set for {time_str}")
+        except ValueError:
+            # Show an error popup if the time format is incorrect
+            self.show_popup("Error", "Invalid time format. Please enter HH:MM.")
+
+    def show_popup(self, title, message):
+        # Create a popup window for messages
+        popup_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        popup_label = Label(text=message, font_size=18)
+        close_button = Button(text='Close', size_hint=(1, 0.3))
+        
+        popup_layout.add_widget(popup_label)
+        popup_layout.add_widget(close_button)
+        
+        popup_window = Popup(title=title, content=popup_layout, size_hint=(0.8, 0.5))
+        close_button.bind(on_press=popup_window.dismiss)
+        popup_window.open()
+
+# Run the Kivy application
+if __name__ == '__main__':
+    Window.size = (480, 320)  # Adjust size to match your Raspberry Pi Touch Display
+    MedicineSchedulerApp().run()
