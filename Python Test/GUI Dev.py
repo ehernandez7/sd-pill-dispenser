@@ -20,14 +20,15 @@ from datetime import datetime, timedelta
 
 # ───────── optional hardware ─────────
 try:
-    from gpiozero import LED, DigitalOutputDevice
+    from gpiozero import LED, DigitalOutputDevice, MotionSensor
     led = LED(14)                       # BCM 14
+    pir = MotionSensor(4)
     DIR_PIN, STEP_PIN = 21, 20          # BCM pins
     dir_pin  = DigitalOutputDevice(DIR_PIN)
     step_pin = DigitalOutputDevice(STEP_PIN)
     HW = True
 except Exception:
-    led = None; HW = False
+    led = None; pir = None; HW = False
 
 try:
     import pygame
@@ -64,6 +65,15 @@ def rotate_to_slot(target:int):
 def reset_motor():
     rotate_to_slot(0)
 
+# ── add global jog flag ─────────────────────────────────────────────
+_jog_event = threading.Event()   # cleared => stop
+
+def _jog_motor(forward: bool):
+    """Spin continuously until _jog_event is cleared."""
+    while not _jog_event.is_set():
+        move_steps(1, forward, delay=0.002)   # 1 step at a time, ~500 Hz max
+
+
 # ───────── LED / audio helpers ─────────
 def audio_on():
     if pygame and os.path.exists(ALARM_FILE):
@@ -85,6 +95,7 @@ def trigger_alarm(day, disp_time, period):
 # ───────── Alarm popup ─────────
 class AlarmPopup(Popup):
     def __init__(self, day, when, **kw):
+        kw.setdefault("auto_dismiss", False)
         super().__init__(**kw)
         self.title      = "⏰  Medicine Reminder  ⏰"
         self.size_hint  = (.8, .5)
@@ -116,6 +127,9 @@ class AlarmPopup(Popup):
         # start flashing & hardware
         self.ev = Clock.schedule_interval(self._flash, 0.7)
         self._start_hardware()
+
+        if pir:
+            pir.when_motion = self._pir_stop
 
     # drawing helpers
     def _upd_rect(self, inst, val):
@@ -152,7 +166,14 @@ class AlarmPopup(Popup):
         if self.ev.is_triggered:
             self.ev.cancel()
         self._stop_hardware()
+        if pir:
+            pir.when_motion = None          # disarm PIR callback
         self.dismiss()
+
+    # ---- NEW helper called by PIR ----
+    def _pir_stop(self):
+        # run in the Kivy thread
+        Clock.schedule_once(lambda dt: self._stop())
 
 # ───────── Home screen ─────────
 class HomeScreen(Screen):
@@ -338,11 +359,39 @@ class DebugScreen(Screen):
         root.add_widget(Button(text="Manual Slot Select",
                                background_color=(.3,.7,.9,1), size_hint=(1,.15),
                                on_press=lambda *_: setattr(self.manager,"current","slots")))
+        
+        # motor jog
+        jog_box = BoxLayout(size_hint=(1,.15), spacing=10)
+        left_btn  = Button(text="◀ Hold", background_color=(.4,.4,.9,1))
+        right_btn = Button(text="Hold ▶", background_color=(.4,.4,.9,1))
+
+        # start jog on press, stop on release
+        left_btn.bind(
+            on_press = lambda *_: self._start_jog(False),
+            on_release = lambda *_: self._stop_jog()
+        )
+        right_btn.bind(
+            on_press = lambda *_: self._start_jog(True),
+            on_release = lambda *_: self._stop_jog()
+        )
+        jog_box.add_widget(left_btn)
+        jog_box.add_widget(right_btn)
+        root.add_widget(jog_box)
+
 
         # back
         root.add_widget(Button(text="Back", background_color=(.2,.4,.8,1), size_hint=(1,.15),
                                on_press=lambda *_: self._leave()))
         self.add_widget(root)
+    
+    # ── motor jog helpers ───────────────────────────────────────────
+    def _start_jog(self, forward: bool):
+        _jog_event.clear()
+        threading.Thread(target=_jog_motor, args=(forward,), daemon=True).start()
+
+    def _stop_jog(self):
+        _jog_event.set()
+
 
     def _upd_rect(self, inst, val):
         self.rect.size = inst.size
