@@ -33,7 +33,7 @@ except Exception:
 try:
     import pygame
     pygame.mixer.init()
-    ALARM_FILE = "Python Test/Good place.mp3"            # put an MP3/WAV here
+    ALARM_FILE = "sd-pill-dispenser/Python Test/Good place.mp3"            # put an MP3/WAV here
 except Exception:
     pygame = None
 
@@ -144,10 +144,18 @@ class AlarmPopup(Popup):
             led.on() if self.flash_on else led.off()
 
     def _start_hardware(self):
+        if ALARM_FILE:
+            try:
+                pygame.mixer.music.load(ALARM_FILE)
+                pygame.mixer.music.play(-1)        # loop until Stop/Snooze
+            except Exception as e:
+                print("Audio error:", e)
         if led: led.on()
         audio_on()
 
     def _stop_hardware(self):
+        if pygame and pygame.mixer.get_init():
+            pygame.mixer.music.stop()
         if led: led.off()
         audio_off()
 
